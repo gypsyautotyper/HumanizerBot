@@ -1,17 +1,30 @@
 {
-  "name": "text-humanizer-bot",
+  "name": "ai-text-humanizer",
   "version": "1.0.0",
-  "description": "Automated text processing bot",
+  "description": "A bot that humanizes AI-generated text using aihumanize.io",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "nodemon server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "playwright": "^1.40.0"
+    "puppeteer": "^21.5.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
   },
   "engines": {
-    "node": ">=18.0.0"
-  }
+    "node": ">=16.0.0"
+  },
+  "keywords": [
+    "ai",
+    "text",
+    "humanizer",
+    "automation",
+    "puppeteer"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
 }
