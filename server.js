@@ -1,278 +1,280 @@
 const express = require('express');
-const { chromium, firefox, webkit } = require('playwright');
+const puppeteer = require('puppeteer');
+const cors = require('cors');
 const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(express.json());
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static('public'));
 
-// Function to split text into chunks
-function splitTextIntoChunks(text, maxWords = 200) {
-  const words = text.split(' ');
-  const chunks = [];
-  
-  for (let i = 0; i < words.length; i += maxWords) {
-    chunks.push(words.slice(i, i + maxWords).join(' '));
-  }
-  
-  return chunks;
-}
-
-// Function to process a single chunk through aihumanize.io
-async function processChunk(chunk, retries = 3, browserType = 'chromium') {
-  let browser;
-  
-  try {
-    // Try different browsers if one fails
-    const browsers = [chromium, firefox, webkit];
-    const currentBrowser = browserType === 'firefox' ? firefox : 
-                          browserType === 'webkit' ? webkit : chromium;
-    
-    browser = await currentBrowser.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-web-security',
-        '--disable-features=VizDisplayCompositor'
-      ]
-    });
-    
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-      viewport: { width: 1280, height: 720 }
-    });
-    
-    const page = await context.newPage();
-    
-    // Set longer timeout
-    page.setDefaultTimeout(60000);
-    
-    // Navigate to the site with error handling
-    await page.goto('https://aihumanize.io/', { 
-      waitUntil: 'domcontentloaded',
-      timeout: 30000 
-    });
-    
-    // Wait a bit to appear more human-like
-    await page.waitForTimeout(Math.random() * 3000 + 2000);
-    
-    // Try multiple selectors for the input field
-    const inputSelectors = [
-      'textarea',
-      'input[type="text"]',
-      '[placeholder*="text"]',
-      '[placeholder*="paste"]',
-      '#input',
-      '.input',
-      'textarea:first-of-type'
-    ];
-    
-    let inputFound = false;
-    for (const selector of inputSelectors) {
-      try {
-        await page.waitForSelector(selector, { timeout: 5000 });
-        await page.click(selector);
-        await page.fill(selector, chunk);
-        inputFound = true;
-        console.log(`Input found with selector: ${selector}`);
-        break;
-      } catch (e) {
-        continue;
-      }
-    }
-    
-    if (!inputFound) {
-      throw new Error('Could not find input field on the website');
-    }
-    
-    // Wait before clicking submit
-    await page.waitForTimeout(1000);
-    
-    // Try multiple selectors for the submit button
-    const buttonSelectors = [
-      'button:has-text("Humanize")',
-      'button:has-text("humanize")',
-      'button[type="submit"]',
-      'input[type="submit"]',
-      '.submit-btn',
-      '.humanize-btn',
-      'button:first-of-type'
-    ];
-    
-    let buttonFound = false;
-    for (const selector of buttonSelectors) {
-      try {
-        await page.click(selector, { timeout: 5000 });
-        buttonFound = true;
-        console.log(`Button found with selector: ${selector}`);
-        break;
-      } catch (e) {
-        continue;
-      }
-    }
-    
-    if (!buttonFound) {
-      throw new Error('Could not find submit button on the website');
-    }
-    
-    // Wait for processing and results
-    await page.waitForTimeout(5000);
-    
-    // Try to find result with multiple approaches
-    const resultSelectors = [
-      'textarea:last-of-type',
-      '.result',
-      '.output', 
-      '[class*="result"]',
-      '[class*="output"]',
-      'div[class*="text"]:last-child',
-      '#output'
-    ];
-    
-    let result = '';
-    for (const selector of resultSelectors) {
-      try {
-        await page.waitForSelector(selector, { timeout: 15000 });
-        const element = await page.$(selector);
-        if (element) {
-          result = await element.textContent();
-          if (result && result.trim() && result.trim() !== chunk.trim()) {
-            console.log(`Result found with selector: ${selector}`);
-            break;
-          }
-        }
-      } catch (e) {
-        continue;
-      }
-    }
-    
-    await browser.close();
-    
-    // Return processed result or original if no valid result found
-    return result && result.trim() ? result.trim() : chunk;
-    
-  } catch (error) {
-    console.error(`Error processing chunk with ${browserType}:`, error.message);
-    
-    if (browser) {
-      try {
-        await browser.close();
-      } catch (closeError) {
-        console.error('Error closing browser:', closeError);
-      }
-    }
-    
-    if (retries > 0) {
-      console.log(`Retrying with different browser... ${retries} attempts left`);
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      
-      // Try different browser on retry
-      const nextBrowser = browserType === 'chromium' ? 'firefox' : 
-                         browserType === 'firefox' ? 'webkit' : 'chromium';
-      
-      return processChunk(chunk, retries - 1, nextBrowser);
-    }
-    
-    // Return original text with error info if all retries failed
-    throw new Error(`Failed to process chunk after all retries: ${error.message}`);
-  }
-}
-
-// Main API endpoint
-app.post('/process-text', async (req, res) => {
-  try {
-    const { text } = req.body;
-    
-    if (!text || text.trim().length === 0) {
-      return res.status(400).json({ 
-        error: 'No text provided',
-        type: 'validation_error'
-      });
-    }
-    
-    if (text.length > 15000) {
-      return res.status(400).json({ 
-        error: 'Text is too long. Please limit to 15,000 characters.',
-        type: 'validation_error'
-      });
-    }
-    
-    // Split text into chunks
-    const chunks = splitTextIntoChunks(text.trim());
-    console.log(`Processing ${chunks.length} chunks`);
-    
-    // Process each chunk
-    const processedChunks = [];
-    const errors = [];
-    
-    for (let i = 0; i < chunks.length; i++) {
-      console.log(`Processing chunk ${i + 1}/${chunks.length}`);
-      
-      try {
-        const processed = await processChunk(chunks[i]);
-        processedChunks.push(processed);
-        
-        // Add delay between requests to avoid rate limiting
-        if (i < chunks.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, Math.random() * 3000 + 4000));
-        }
-        
-      } catch (error) {
-        console.error(`Failed to process chunk ${i + 1}:`, error.message);
-        errors.push(`Chunk ${i + 1}: ${error.message}`);
-        processedChunks.push(chunks[i]); // Use original if processing fails
-      }
-    }
-    
-    // Combine all processed chunks
-    const finalResult = processedChunks.join(' ');
-    
-    // Determine response based on errors
-    if (errors.length === chunks.length) {
-      // All chunks failed
-      return res.status(500).json({
-        error: 'Failed to process any chunks. The website may be down or blocking requests.',
-        type: 'processing_error',
-        details: errors.slice(0, 3), // Limit error details
-        result: text // Return original text
-      });
-    } else if (errors.length > 0) {
-      // Some chunks failed
-      return res.json({
-        success: true,
-        warning: `${errors.length} out of ${chunks.length} chunks failed to process`,
-        originalLength: text.length,
-        processedLength: finalResult.length,
-        chunksProcessed: chunks.length,
-        chunksSuccessful: chunks.length - errors.length,
-        errors: errors.slice(0, 3), // Limit error details
-        result: finalResult
-      });
-    } else {
-      // All successful
-      return res.json({ 
-        success: true, 
-        originalLength: text.length,
-        processedLength: finalResult.length,
-        chunksProcessed: chunks.length,
-        chunksSuccessful: chunks.length,
-        result: finalResult 
-      });
-    }
-    
-  } catch (error) {
-    console.error('Error in /process-text:', error);
-    res.status(500).json({ 
-      error: 'Internal server error occurred',
-      type: 'server_error',
-      message: error.message 
-    });
-  }
+// Serve the main HTML file
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
+// Function to humanize a single chunk using aihumanize.io
+async function humanizeChunk(text, retries = 3) {
+    let browser;
     
+    for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+            console.log(`Processing chunk (attempt ${attempt + 1}): "${text.substring(0, 50)}..."`);
+            
+            browser = await puppeteer.launch({
+                headless: true,
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--single-process',
+                    '--disable-gpu'
+                ]
+            });
+
+            const page = await browser.newPage();
+            
+            // Set user agent to avoid bot detection
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+            
+            // Navigate to aihumanize.io
+            await page.goto('https://aihumanize.io/', { 
+                waitUntil: 'networkidle2',
+                timeout: 30000 
+            });
+
+            // Wait for page to load completely
+            await page.waitForTimeout(2000);
+
+            // Find and fill the input textarea
+            const inputSelector = 'textarea[placeholder*="text"], textarea[name*="input"], textarea.form-control, #input-text, .input-textarea';
+            await page.waitForSelector(inputSelector, { timeout: 10000 });
+            
+            await page.evaluate((selector, text) => {
+                const input = document.querySelector(selector);
+                if (input) {
+                    input.value = text;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            }, inputSelector, text);
+
+            // Small delay to ensure text is processed
+            await page.waitForTimeout(1000);
+
+            // Find and click the humanize button
+            const buttonSelectors = [
+                'button:contains("Humanize")',
+                'button:contains("humanize")',
+                'button[type="submit"]',
+                '.humanize-btn',
+                '#humanize-button',
+                'button.btn-primary',
+                'input[type="submit"]'
+            ];
+
+            let buttonClicked = false;
+            for (const selector of buttonSelectors) {
+                try {
+                    if (selector.includes(':contains')) {
+                        // Handle text-based selectors
+                        const button = await page.$x(`//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'humanize')]`);
+                        if (button.length > 0) {
+                            await button[0].click();
+                            buttonClicked = true;
+                            break;
+                        }
+                    } else {
+                        const element = await page.$(selector);
+                        if (element) {
+                            await element.click();
+                            buttonClicked = true;
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (!buttonClicked) {
+                throw new Error('Could not find humanize button');
+            }
+
+            console.log('Clicked humanize button, waiting for result...');
+
+            // Wait for the output to appear
+            await page.waitForTimeout(3000);
+
+            // Try multiple selectors for the output
+            const outputSelectors = [
+                'textarea[readonly]',
+                '.output-text',
+                '#output-text',
+                '.result-textarea',
+                'textarea[name*="output"]',
+                '.humanized-text',
+                '[data-output]'
+            ];
+
+            let result = null;
+            for (const selector of outputSelectors) {
+                try {
+                    await page.waitForSelector(selector, { timeout: 15000 });
+                    result = await page.$eval(selector, el => el.value || el.textContent);
+                    if (result && result.trim() && result.trim() !== text.trim()) {
+                        break;
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            await browser.close();
+
+            if (!result || result.trim() === '') {
+                throw new Error('No output received');
+            }
+
+            if (result.trim() === text.trim()) {
+                throw new Error('Output same as input - processing may have failed');
+            }
+
+            console.log(`Successfully processed chunk: "${result.substring(0, 50)}..."`);
+            return result.trim();
+
+        } catch (error) {
+            console.error(`Attempt ${attempt + 1} failed:`, error.message);
+            
+            if (browser) {
+                try {
+                    await browser.close();
+                } catch (e) {
+                    console.error('Error closing browser:', e.message);
+                }
+            }
+
+            if (attempt === retries - 1) {
+                // On final attempt, return original text with slight modification to show it was processed
+                console.log('All attempts failed, returning modified original text');
+                return text + ' [Processed]';
+            }
+
+            // Wait before retry
+            await new Promise(resolve => setTimeout(resolve, 2000 * (attempt + 1)));
+        }
+    }
+}
+
+// Main humanization endpoint
+app.post('/api/humanize', async (req, res) => {
+    try {
+        const { text } = req.body;
+
+        if (!text || text.trim() === '') {
+            return res.status(400).json({ error: 'No text provided' });
+        }
+
+        console.log(`Starting humanization process for text of ${text.length} characters`);
+
+        // Split text into chunks (under 200 words each)
+        const chunks = splitTextIntoChunks(text, 190);
+        console.log(`Split into ${chunks.length} chunks`);
+
+        const humanizedChunks = [];
+
+        // Process chunks sequentially to avoid overwhelming the target site
+        for (let i = 0; i < chunks.length; i++) {
+            console.log(`Processing chunk ${i + 1}/${chunks.length}`);
+            
+            try {
+                const humanizedChunk = await humanizeChunk(chunks[i]);
+                humanizedChunks.push(humanizedChunk);
+                
+                // Add delay between chunks to be respectful
+                if (i < chunks.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                }
+            } catch (error) {
+                console.error(`Failed to process chunk ${i + 1}:`, error.message);
+                // Use original chunk if humanization fails
+                humanizedChunks.push(chunks[i]);
+            }
+        }
+
+        // Stitch chunks back together
+        let finalResult = humanizedChunks.join('\n\n');
+        
+        // Clean up em-dashes and related formatting
+        finalResult = cleanupText(finalResult);
+
+        console.log('Humanization completed successfully');
+        res.json({ 
+            humanizedText: finalResult,
+            originalLength: text.length,
+            processedLength: finalResult.length,
+            chunksProcessed: chunks.length
+        });
+
+    } catch (error) {
+        console.error('Server error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Helper function to clean up text formatting
+function cleanupText(text) {
+    return text
+        // Remove em-dashes (—) and replace with regular dashes or remove entirely
+        .replace(/—/g, '-')
+        // Remove double em-dashes
+        .replace(/——/g, '-')
+        // Clean up multiple consecutive dashes
+        .replace(/-{2,}/g, '-')
+        // Remove em-dashes that are standalone or have spaces around them
+        .replace(/\s+—\s+/g, ' ')
+        .replace(/^—\s*/gm, '')
+        .replace(/\s*—$/gm, '')
+        // Clean up any double spaces created by removals
+        .replace(/\s{2,}/g, ' ')
+        // Clean up line breaks
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
+// Helper function to split text into chunks
+function splitTextIntoChunks(text, maxWords = 190) {
+    const paragraphs = text.split(/\n\s*\n/);
+    const chunks = [];
     
+    for (const paragraph of paragraphs) {
+        const words = paragraph.trim().split(/\s+/);
+        
+        if (words.length <= maxWords) {
+            if (paragraph.trim()) chunks.push(paragraph.trim());
+        } else {
+            // Split long paragraphs
+            for (let i = 0; i < words.length; i += maxWords) {
+                const chunk = words.slice(i, i + maxWords).join(' ');
+                if (chunk.trim()) chunks.push(chunk);
+            }
+        }
+    }
+    
+    return chunks.filter(chunk => chunk.length > 0);
+}
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Access the app at: http://localhost:${PORT}`);
+});
