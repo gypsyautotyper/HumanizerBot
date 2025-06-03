@@ -1,0 +1,17 @@
+{
+  "name": "text-humanizer-bot",
+  "version": "1.0.0",
+  "description": "Automated text processing bot",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "puppeteer": "^21.5.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text Processor</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            font-weight: 700;
+        }
+
+        .input-section, .output-section {
+            margin-bottom: 30px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: 600;
+            color: #555;
+            font-size: 1.1em;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 200px;
+            padding: 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 15px;
+            font-size: 16px;
+            font-family: inherit;
+            resize: vertical;
+            transition: all 0.3s ease;
+            background: #fafafa;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            background: white;
+            box-shadow: 0 0 20px rgba(102, 126, 234, 0.2);
+        }
+
+        .button-container {
+            text-align: center;
+            margin: 30px 0;
+        }
+
+        #processBtn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            font-size: 18px;
+            font-weight: 600;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        #processBtn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 15px 30px rgba(102, 126, 234, 0.4);
+        }
+
+        #processBtn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .stats {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            display: none;
+        }
+
+        .stats.show {
+            display: block;
+        }
+
+        .stats p {
+            margin: 5px 0;
+            color: #666;
+        }
+
+        .error {
+            background: #fee;
+            color: #d00;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border-left: 4px solid #d00;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .copy-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-top: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .copy-btn:hover {
+            background: #218838;
+            transform: translateY(-1px);
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px;
+            }
+            
+            h1 {
+                font-size: 2em;
+            }
+            
+            textarea {
+                min-height: 150px;
+                padding: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>✨ Text Processor</h1>
+        
+        <div class="input-section">
+            <label for="inputText">Enter your text:</label>
+            <textarea id="inputText" placeholder="Paste your text here..."></textarea>
+        </div>
+
+        <div class="button-container">
+            <button id="processBtn">Process Text</button>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            Processing your text... This may take a few minutes.
+        </div>
+
+        <div class="error" id="error"></div>
+
+        <div class="stats" id="stats"></div>
+
+        <div class="output-section">
+            <label for="outputText">Processed text:</label>
+            <textarea id="outputText" readonly placeholder="Your processed text will appear here..."></textarea>
+            <button class="copy-btn" id="copyBtn" style="display: none;">Copy to Clipboard</button>
+        </div>
+    </div>
+
+    <script>
+        const inputText = document.getElementById('inputText');
+        const outputText = document.getElementById('outputText');
+        const processBtn = document.getElementById('processBtn');
+        const loading = document.getElementById('loading');
+        const error = document.getElementById('error');
+        const stats = document.getElementById('stats');
+        const copyBtn = document.getElementById('copyBtn');
+
+        processBtn.addEventListener('click', async () => {
+            const text = inputText.value.trim();
+            
+            if (!text) {
+                showError('Please enter some text to process.');
+                return;
+            }
+
+            if (text.length > 10000) {
+                showError('Text is too long. Please limit to 10,000 characters.');
+                return;
+            }
+
+            // Reset UI
+            hideError();
+            hideStats();
+            outputText.value = '';
+            copyBtn.style.display = 'none';
+            
+            // Show loading
+            processBtn.disabled = true;
+            loading.classList.add('show');
+
+            try {
+                const response = await fetch('/process-text', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ text: text })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    outputText.value = data.result;
+                    showStats(data);
+                    copyBtn.style.display = 'inline-block';
+                } else {
+                    showError(data.error || 'Failed to process text');
+                }
+            } catch (err) {
+                showError('Network error. Please try again.');
+                console.error('Error:', err);
+            } finally {
+                processBtn.disabled = false;
+                loading.classList.remove('show');
+            }
+        });
+
+        copyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(outputText.value);
+                const originalText = copyBtn.textContent;
+                copyBtn.textContent = 'Copied!';
+                setTimeout(() => {
+                    copyBtn.textContent = originalText;
+                }, 2000);
+            } catch (err) {
+                // Fallback for older browsers
+                outputText.select();
+                document.execCommand('copy');
+                copyBtn.textContent = 'Copied!';
+                setTimeout(() => {
+                    copyBtn.textContent = 'Copy to Clipboard';
+                }, 2000);
+            }
+        });
+
+        function showError(message) {
+            error.textContent = message;
+            error.classList.add('show');
+        }
+
+        function hideError() {
+            error.classList.remove('show');
+        }
+
+        function showStats(data) {
+            stats.innerHTML = `
+                <p><strong>Processing Complete!</strong></p>
+                <p>Original length: ${data.originalLength} characters</p>
+                <p>Processed length: ${data.processedLength} characters</p>
+                <p>Chunks processed: ${data.chunksProcessed}</p>
+            `;
+            stats.classList.add('show');
+        }
+
+        function hideStats() {
+            stats.classList.remove('show');
+        }
+
+        // Auto-resize textareas
+        function autoResize(textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = Math.max(200, textarea.scrollHeight) + 'px';
+        }
+
+        inputText.addEventListener('input', () => autoResize(inputText));
+        outputText.addEventListener('input', () => autoResize(outputText));
+    </script>
+</body>
+</html>
